@@ -9,12 +9,12 @@
 
   <!-- Runtime dependencies -->
   <depend>rclpy</depend>
-  <depend>moveit_commander</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>moveit_msgs</depend>
   <depend>tf_transformations</depend>
-  <depend>drims2_msgs</depend>
+  <depend>easy_motion_msgs</depend>
+  <depend>generate_parameter_library</depend>
 
   <export>
     <build_type>ament_python</build_type>

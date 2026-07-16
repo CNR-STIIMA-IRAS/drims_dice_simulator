@@ -1,0 +1,55 @@
+dice_spawner_node:
+  face_up: {
+    type: int,
+    default_value: 0,
+    description: "Face number facing upward (1–6, 0 = random)",
+    validation: {
+      bounds<>: [0, 6]
+    }
+  }
+  dice_size: {
+    type: double,
+    default_value: 0.027,
+    description: "Length of the dice edge (in meters)",
+    validation: {
+      bounds<>: [0.001, 1.0]
+    }
+  }
+  random_position: {
+    type: bool,
+    default_value: false,
+    description: "Whether to spawn at a random position within bounds"
+  }
+  x_min: {
+    type: double,
+    default_value: 0.40,
+    description: "Minimum X coordinate bounds"
+  }
+  x_max: {
+    type: double,
+    default_value: 0.80,
+    description: "Maximum X coordinate bounds"
+  }
+  y_min: {
+    type: double,
+    default_value: -0.20,
+    description: "Minimum Y coordinate bounds"
+  }
+  y_max: {
+    type: double,
+    default_value: 0.40,
+    description: "Maximum Y coordinate bounds"
+  }
+  surface_height: {
+    type: double,
+    default_value: 0.0,
+    description: "Surface height (in meters)"
+  }
+  position: {
+    type: double_array,
+    default_value: [0.6, 0.2, 0.0],
+    description: "Initial dice position [x, y, z]",
+    validation: {
+      fixed_size<>: [3]
+    }
+  }
