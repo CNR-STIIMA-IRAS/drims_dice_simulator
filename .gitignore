@@ -6,3 +6,5 @@ kdev4/
 *.autosave*
 *.idea
 *.pyc
+__pycache__
+.vscode

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from ament_pep257.main import main
 import pytest
 
@@ -19,5 +20,6 @@ import pytest
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257():
-    rc = main(argv=['.', 'test'])
-    assert rc == 0, 'Found code style errors / warnings'
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rc = main(argv=[pkg_root])
+    assert rc == 0, "Found code style errors / warnings"
