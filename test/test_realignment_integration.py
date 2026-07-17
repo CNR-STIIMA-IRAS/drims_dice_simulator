@@ -82,16 +82,13 @@ class RealignmentIntegrationTester(Node):
         scene = future.result().scene
 
         body_obj = None
-        pips_obj = None
         for obj in scene.world.collision_objects:
             if obj.id == "dice":
                 body_obj = obj
-            elif obj.id == "dice_pips":
-                pips_obj = obj
 
-        if body_obj is None or pips_obj is None:
+        if body_obj is None:
             self.get_logger().error(
-                "Could not find 'dice' and 'dice_pips' in MoveIt planning scene. "
+                "Could not find 'dice' in MoveIt planning scene. "
                 "Please launch spawn_dice.launch.py first!"
             )
             return False
@@ -160,26 +157,15 @@ class RealignmentIntegrationTester(Node):
         body_update.mesh_poses = [start_pose]
         body_update.operation = CollisionObject.ADD
 
-        pips_update = CollisionObject()
-        pips_update.id = "dice_pips"
-        pips_update.header.frame_id = world_frame
-        pips_update.meshes = pips_obj.meshes
-        pips_update.mesh_poses = [start_pose]
-        pips_update.operation = CollisionObject.ADD
-
         # Setup colors
         color = ObjectColor()
         color.id = "dice"
         color.color = ColorRGBA(r=0.85, g=0.65, b=0.25, a=1.0)
 
-        color_pips = ObjectColor()
-        color_pips.id = "dice_pips"
-        color_pips.color = ColorRGBA(r=0.1, g=0.1, b=0.1, a=1.0)
-
         # Apply diff
         diff_scene = PlanningScene()
-        diff_scene.world.collision_objects = [body_update, pips_update]
-        diff_scene.object_colors = [color, color_pips]
+        diff_scene.world.collision_objects = [body_update]
+        diff_scene.object_colors = [color]
         diff_scene.is_diff = True
 
         apply_req = ApplyPlanningScene.Request(scene=diff_scene)

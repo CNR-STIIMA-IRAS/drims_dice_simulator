@@ -53,3 +53,19 @@ dice_spawner_node:
       fixed_size<>: [3]
     }
   }
+  pips_distance: {
+    type: double,
+    default_value: 0.26,
+    description: "Distance of pips from the center of the face (as a fraction of dice size)",
+    validation: {
+      bounds<>: [0.0, 0.5]
+    }
+  }
+  pip_diameter: {
+    type: double,
+    default_value: 0.21,
+    description: "Diameter of pips (as a fraction of dice size)",
+    validation: {
+      bounds<>: [0.0, 0.5]
+    }
+  }

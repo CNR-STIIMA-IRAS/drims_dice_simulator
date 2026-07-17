@@ -2,14 +2,14 @@ from setuptools import setup
 from glob import glob
 from generate_parameter_library_py.setup_helper import generate_parameter_module
 
-package_name = "drims2_dice_simulator"
+package_name = "drims_dice_simulator"
 
 generate_parameter_module("dice_spawner_parameters", "config/dice_spawner_parameters.yaml")
 
 setup(
     name=package_name,
     version="0.0.1",
-    packages=["drims2_dice_simulator"],
+    packages=["drims_dice_simulator"],
     package_dir={"": "."},
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -27,7 +27,7 @@ setup(
     license="MIT",
     entry_points={
         "console_scripts": [
-            "dice_spawner = drims2_dice_simulator.dice_spawner:main",
+            "dice_spawner = drims_dice_simulator.dice_spawner:main",
         ],
     },
 )

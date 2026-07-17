@@ -1,15 +1,16 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>drims2_dice_simulator</name>
+  <name>drims_dice_simulator</name>
   <version>0.0.0</version>
   <description>Dice spawning and face detection service</description>
-  <maintainer email="cesare.tonola@cnr.it">riemann</maintainer>
+  <maintainer email="micheleferrari1@cnr.it">Michele Ferrari</maintainer>
   <license>MIT</license>
 
   <!-- Runtime dependencies -->
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>std_msgs</depend>
   <depend>moveit_msgs</depend>
   <depend>std_srvs</depend>

@@ -12,14 +12,13 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from geometry_msgs.msg import Pose, PoseStamped, TransformStamped, Point, Vector3, Quaternion
-from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster, Buffer, TransformListener
+from tf2_ros import TransformBroadcaster, Buffer, TransformListener
 from tf_transformations import quaternion_from_euler, quaternion_multiply
 from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene
 from moveit_msgs.msg import (
     PlanningScene,
     CollisionObject,
     ObjectColor,
-    AllowedCollisionEntry,
 )
 from shape_msgs.msg import Mesh, MeshTriangle
 from std_msgs.msg import Int16, ColorRGBA
@@ -97,13 +96,17 @@ class DiceSpawner(Node):
             self.get_logger().info("Waiting for /apply_planning_scene service...")
 
         self.apply_scene_client_sync = self.internal_node.create_client(
-            ApplyPlanningScene, "/apply_planning_scene", callback_group=self.get_scene_callback_group
+            ApplyPlanningScene,
+            "/apply_planning_scene",
+            callback_group=self.get_scene_callback_group,
         )
         while not self.apply_scene_client_sync.wait_for_service(timeout_sec=2.0):
             self.get_logger().info("Waiting for /apply_planning_scene (sync) service...")
 
         self.get_scene_client = self.internal_node.create_client(
-            GetPlanningScene, "/get_planning_scene", callback_group=self.get_scene_callback_group
+            GetPlanningScene,
+            "/get_planning_scene",
+            callback_group=self.get_scene_callback_group,
         )
         while not self.get_scene_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().info("Waiting for /get_planning_scene service...")
@@ -127,6 +130,13 @@ class DiceSpawner(Node):
             6: np.array([0, 0, 1]),
         }
 
+        # Precompute face transforms (offset and rotation) to optimize TF publishing loop
+        self.face_transforms = {}
+        for face_id, normal in self.face_normals.items():
+            offset = (self.dice_size / 2.0) * normal
+            q_face = self.get_quaternion_from_normal(normal)
+            self.face_transforms[face_id] = (offset, q_face)
+
         # Initialize grasped state variables for dynamic TF publishing
         self.parent_frame = self.world
         self.current_pose = Pose()
@@ -136,8 +146,8 @@ class DiceSpawner(Node):
         self.marker_pub = self.create_publisher(MarkerArray, "/visualization_marker_array", 10)
         self.marker_timer = self.create_timer(0.2, self.publish_pips_marker)
 
-        # Dynamic transform publisher timer at 20Hz (every 0.05 seconds)
-        self.tf_timer = self.create_timer(0.05, self.publish_all_transforms)
+        # Dynamic transform publisher timer at 200Hz (every 0.005 seconds) for high-rate synchronization
+        self.tf_timer = self.create_timer(0.005, self.publish_all_transforms)
 
         self.precompute_meshes()
         self.spawn_dice_with_mesh()
@@ -208,9 +218,7 @@ class DiceSpawner(Node):
         tf_com.transform.rotation = rotation
         transforms.append(tf_com)
 
-        for face_id, normal in self.face_normals.items():
-            offset = (self.dice_size / 2.0) * normal
-            q_face = self.get_quaternion_from_normal(normal)
+        for face_id, (offset, q_face) in self.face_transforms.items():
             tf_face = TransformStamped()
             tf_face.header.stamp = now
             tf_face.header.frame_id = "dice_com_tf"
@@ -264,19 +272,15 @@ class DiceSpawner(Node):
             # --- Check attachment state of dice ---
             dice_attached = False
             attached_link = None
-            attached_pose = None
             dice_touch_links = []
 
             for attached_obj in result.scene.robot_state.attached_collision_objects:
                 if attached_obj.object.id == self.dice_name:
                     dice_attached = True
                     attached_link = attached_obj.link_name
-                    attached_pose = attached_obj.object.pose
                     dice_touch_links = attached_obj.touch_links
 
             self.is_grasped = dice_attached
-
-            from moveit_msgs.msg import AttachedCollisionObject
 
             if dice_attached:
                 # Dynamically construct the full gripper touch links list from ACM
@@ -355,7 +359,9 @@ class DiceSpawner(Node):
 
         # Build monolithic Mesh message for the body
         self.body_mesh = Mesh()
-        self.body_mesh.triangles = [MeshTriangle(vertex_indices=tri.tolist()) for tri in mesh.faces]
+        self.body_mesh.triangles = [
+            MeshTriangle(vertex_indices=tri.tolist()) for tri in mesh.faces
+        ]
         for v in mesh.vertices:
             point = Point()
             point.x, point.y, point.z = v * self.dice_size
@@ -368,7 +374,8 @@ class DiceSpawner(Node):
         D = self.params.pips_distance * S
         pip_diameter = self.params.pip_diameter * S
         h = 0.001  # 1 mm height of cylinder
-        # We place the cylinder top 1.0 mm above the face surface to ensure it is always rendered in front of the dice
+        # We place the cylinder top 1.0 mm above the face surface
+        # to ensure it is always rendered in front of the dice
         z_offset = -h / 2.0 + 0.0010
 
         face_layouts = {
@@ -585,7 +592,9 @@ class DiceSpawner(Node):
                         best_dot = dot
                         best_face = face_id
                 except Exception as ex:
-                    self.get_logger().warning(f"Could not lookup transform for face {face_id} during reset: {ex}")
+                    self.get_logger().warning(
+                        f"Could not lookup transform for face {face_id} during reset: {ex}"
+                    )
 
             if best_face is not None:
                 self.face = best_face
