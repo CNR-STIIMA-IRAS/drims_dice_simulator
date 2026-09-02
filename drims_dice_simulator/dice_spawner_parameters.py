@@ -31,6 +31,7 @@ class dice_spawner_node:
         y_max = 0.4
         surface_height = 0.0
         position = [0.6, 0.2, 0.0]
+        orientation = [0.0, 0.0, 0.0, 0.0]
         pips_distance = 0.26
         pip_diameter = 0.21
 
@@ -147,6 +148,10 @@ class dice_spawner_node:
                     updated_params.position = param.value
                     self.logger_.debug(param.name + ": " + param.type_.name + " = " + str(param.value))
 
+                if param.name == self.prefix_ + "orientation":
+                    updated_params.orientation = param.value
+                    self.logger_.debug(param.name + ": " + param.type_.name + " = " + str(param.value))
+
                 if param.name == self.prefix_ + "pips_distance":
                     validation_result = ParameterValidators.bounds(param, 0.0, 0.5)
                     if validation_result:
@@ -226,34 +231,26 @@ class dice_spawner_node:
                 parameter = updated_params.position
                 self.node_.declare_parameter(self.prefix_ + "position", parameter, descriptor)
 
+            if not self.node_.has_parameter(self.prefix_ + "orientation"):
+                descriptor = ParameterDescriptor(description=r"Initial dice orientation as Roll-Pitch-Yaw [r, p, y] in radians or Quaternion [x, y, z, w]", read_only = False)
+                parameter = updated_params.orientation
+                self.node_.declare_parameter(self.prefix_ + "orientation", parameter, descriptor)
+
             if not self.node_.has_parameter(self.prefix_ + "pips_distance"):
-                descriptor = ParameterDescriptor(
-                    description=(
-                        "Distance of pips from the center of the face "
-                        "(as a fraction of dice size)"
-                    ),
-                    read_only=False,
-                )
+                descriptor = ParameterDescriptor(description=r"Distance of pips from the center of the face (as a fraction of dice size)", read_only = False)
                 descriptor.floating_point_range.append(FloatingPointRange())
                 descriptor.floating_point_range[-1].from_value = 0.0
                 descriptor.floating_point_range[-1].to_value = 0.5
                 parameter = updated_params.pips_distance
-                self.node_.declare_parameter(
-                    self.prefix_ + "pips_distance", parameter, descriptor
-                )
+                self.node_.declare_parameter(self.prefix_ + "pips_distance", parameter, descriptor)
 
             if not self.node_.has_parameter(self.prefix_ + "pip_diameter"):
-                descriptor = ParameterDescriptor(
-                    description="Diameter of pips (as a fraction of dice size)",
-                    read_only=False,
-                )
+                descriptor = ParameterDescriptor(description=r"Diameter of pips (as a fraction of dice size)", read_only = False)
                 descriptor.floating_point_range.append(FloatingPointRange())
                 descriptor.floating_point_range[-1].from_value = 0.0
                 descriptor.floating_point_range[-1].to_value = 0.5
                 parameter = updated_params.pip_diameter
-                self.node_.declare_parameter(
-                    self.prefix_ + "pip_diameter", parameter, descriptor
-                )
+                self.node_.declare_parameter(self.prefix_ + "pip_diameter", parameter, descriptor)
 
             # TODO: need validation
             # get parameters and fill struct fields
@@ -293,29 +290,20 @@ class dice_spawner_node:
             if validation_result:
                 raise InvalidParameterValueException('position',param.value, 'Invalid value set during initialization for parameter position: ' + validation_result)
             updated_params.position = param.value
-
+            param = self.node_.get_parameter(self.prefix_ + "orientation")
+            self.logger_.debug(param.name + ": " + param.type_.name + " = " + str(param.value))
+            updated_params.orientation = param.value
             param = self.node_.get_parameter(self.prefix_ + "pips_distance")
             self.logger_.debug(param.name + ": " + param.type_.name + " = " + str(param.value))
             validation_result = ParameterValidators.bounds(param, 0.0, 0.5)
             if validation_result:
-                raise InvalidParameterValueException(
-                    "pips_distance",
-                    param.value,
-                    "Invalid value set during initialization for parameter "
-                    "pips_distance: " + validation_result,
-                )
+                raise InvalidParameterValueException('pips_distance',param.value, 'Invalid value set during initialization for parameter pips_distance: ' + validation_result)
             updated_params.pips_distance = param.value
-
             param = self.node_.get_parameter(self.prefix_ + "pip_diameter")
             self.logger_.debug(param.name + ": " + param.type_.name + " = " + str(param.value))
             validation_result = ParameterValidators.bounds(param, 0.0, 0.5)
             if validation_result:
-                raise InvalidParameterValueException(
-                    "pip_diameter",
-                    param.value,
-                    "Invalid value set during initialization for parameter "
-                    "pip_diameter: " + validation_result,
-                )
+                raise InvalidParameterValueException('pip_diameter',param.value, 'Invalid value set during initialization for parameter pip_diameter: ' + validation_result)
             updated_params.pip_diameter = param.value
 
 

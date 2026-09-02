@@ -23,6 +23,9 @@ All parameters default to values defined in [dice_spawner_parameters.yaml](confi
 - **`position`** *(double_array[3], default: `[0.6, 0.2, 0.0]`)*  
   XYZ spawn position in the `base_link` frame.
 
+- **`orientation`** *(double_array, default: `[]`)*  
+  Initial dice orientation in the `base_link` frame specified as Roll-Pitch-Yaw `[roll, pitch, yaw]` in radians (3 elements) or Quaternion `[x, y, z, w]` (4 elements). Overrides `face_up` when provided.
+
 - **`random_position`** *(bool, default: `false`)*  
   Whether to spawn at a random position within bounds.
 
@@ -51,6 +54,11 @@ ros2 launch drims_dice_simulator spawn_dice.launch.py
 Fixed face (e.g., “6”), custom pip spacing and dice size:
 ```bash
 ros2 launch drims_dice_simulator spawn_dice.launch.py face_up:=6 dice_size:=0.05 pips_distance:=0.22
+```
+
+Custom position and orientation (Roll-Pitch-Yaw):
+```bash
+ros2 launch drims_dice_simulator spawn_dice.launch.py position:="[0.6, 0.2, 0.0]" orientation:="[0.0, 0.0, 1.57]"
 ```
 
 ## Coordinate Frames (TF)

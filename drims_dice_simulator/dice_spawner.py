@@ -37,13 +37,17 @@ class DiceSpawner(Node):
         self.param_listener = dice_spawner_node.ParamListener(self)
         self.params = self.param_listener.get_params()
 
-        face = self.params.face_up
-        self.face = face if 1 <= face <= 6 else random.randint(1, 6)
-        q = self.get_orientation_for_face(self.face)
-        self.orientation_q = [q[0], q[1], q[2], q[3]]
-
         self.dice_name = "dice"
         self.dice_size = self.params.dice_size
+
+        self.face_normals = {
+            1: np.array([0, 0, -1]),
+            2: np.array([-1, 0, 0]),
+            3: np.array([0, 1, 0]),
+            4: np.array([0, -1, 0]),
+            5: np.array([1, 0, 0]),
+            6: np.array([0, 0, 1]),
+        }
 
         # Initialize TF buffer and listener early so we can resolve base_link transforms
         self.tf_buffer = Buffer()
@@ -120,15 +124,6 @@ class DiceSpawner(Node):
         )
         while not self.detach_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().info("Waiting for /detach_object service...")
-
-        self.face_normals = {
-            1: np.array([0, 0, -1]),
-            2: np.array([-1, 0, 0]),
-            3: np.array([0, 1, 0]),
-            4: np.array([0, -1, 0]),
-            5: np.array([1, 0, 0]),
-            6: np.array([0, 0, 1]),
-        }
 
         # Precompute face transforms (offset and rotation) to optimize TF publishing loop
         self.face_transforms = {}
@@ -452,9 +447,10 @@ class DiceSpawner(Node):
         future = self.apply_scene_client.call_async(req)
         future.add_done_callback(self.spawn_dice_result)
 
+        q_str = f"[{self.orientation_q[0]:.4f}, {self.orientation_q[1]:.4f}, {self.orientation_q[2]:.4f}, {self.orientation_q[3]:.4f}]"
         self.get_logger().info(
             f"Spawned dice with:\n - face {self.face} up \n - position ["
-            f"{self.position.x}, {self.position.y}, {self.position.z}] \n - size {self.dice_size}"
+            f"{self.position.x:.4f}, {self.position.y:.4f}, {self.position.z:.4f}] \n - orientation {q_str} \n - size {self.dice_size}"
         )
 
     def spawn_dice_result(self, future):
@@ -556,13 +552,7 @@ class DiceSpawner(Node):
             self.is_grasped = False
             self.parent_frame = self.world
 
-            # 3. Resolve face and orientation
-            face = self.params.face_up
-            self.face = face if 1 <= face <= 6 else random.randint(1, 6)
-            q = self.get_orientation_for_face(self.face)
-            self.orientation_q = [q[0], q[1], q[2], q[3]]
-
-            # 4. Resolve spawn position w.r.t base_link and transform to world
+            # 3. Resolve spawn position and orientation w.r.t base_link and transform to world
             self.resolve_spawn_position()
 
             # 5. Publish new static transforms (this moves dice_com_tf and face_tfs)
@@ -705,6 +695,59 @@ class DiceSpawner(Node):
         surface_pt_base = [0.0, 0.0, surface_height]
         rotated_surface = self.rotate_vector(surface_pt_base, [qx, qy, qz, qw])
         self.surface_height_world = rotated_surface[2] + tz
+
+        # 3. Transform and resolve the spawn orientation
+        self.resolve_spawn_orientation(qx, qy, qz, qw)
+
+    def resolve_spawn_orientation(self, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+        self.params = self.param_listener.get_params()
+        orientation_param = (
+            list(self.params.orientation)
+            if hasattr(self.params, "orientation") and self.params.orientation
+            else []
+        )
+        is_nonzero = any(v != 0 for v in orientation_param)
+
+        if is_nonzero and len(orientation_param) == 3:
+            r, p, y = orientation_param[0], orientation_param[1], orientation_param[2]
+            q_base = quaternion_from_euler(r, p, y)
+        elif is_nonzero and len(orientation_param) == 4:
+            q_base = np.array(orientation_param, dtype=float)
+            norm = np.linalg.norm(q_base)
+            if norm > 1e-6:
+                q_base = q_base / norm
+            else:
+                q_base = np.array([0.0, 0.0, 0.0, 1.0])
+        elif is_nonzero:
+            error_msg = (
+                f"Invalid orientation parameter length {len(orientation_param)}. "
+                "Expected 3 elements [roll, pitch, yaw] or 4 elements [x, y, z, w]."
+            )
+            self.get_logger().error(error_msg)
+            raise SystemExit(error_msg)
+        else:
+            face = self.params.face_up
+            self.face = face if 1 <= face <= 6 else random.randint(1, 6)
+            q_base = self.get_orientation_for_face(self.face)
+
+        q_world = quaternion_multiply([qx, qy, qz, qw], q_base)
+        self.orientation_q = [
+            float(q_world[0]),
+            float(q_world[1]),
+            float(q_world[2]),
+            float(q_world[3]),
+        ]
+
+        best_face = None
+        best_dot = -1.0
+        for face_id, normal in self.face_normals.items():
+            rotated_normal = self.rotate_vector(normal, self.orientation_q)
+            dot = rotated_normal[2]
+            if dot > best_dot:
+                best_dot = dot
+                best_face = face_id
+        if best_face is not None:
+            self.face = best_face
 
     def get_quaternion_from_normal(self, normal):
         z_axis = np.array([0, 0, 1])

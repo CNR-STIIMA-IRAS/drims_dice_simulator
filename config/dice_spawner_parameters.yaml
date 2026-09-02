@@ -53,6 +53,11 @@ dice_spawner_node:
       fixed_size<>: [3]
     }
   }
+  orientation: {
+    type: double_array,
+    default_value: [0.0, 0.0, 0.0, 0.0],
+    description: "Initial dice orientation as Roll-Pitch-Yaw [r, p, y] in radians or Quaternion [x, y, z, w]"
+  }
   pips_distance: {
     type: double,
     default_value: 0.26,
