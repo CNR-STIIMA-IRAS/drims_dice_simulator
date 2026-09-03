@@ -1,10 +1,6 @@
 from setuptools import setup
 from glob import glob
-from generate_parameter_library_py.setup_helper import generate_parameter_module
-
 package_name = "drims_dice_simulator"
-
-generate_parameter_module("dice_spawner_parameters", "config/dice_spawner_parameters.yaml")
 
 setup(
     name=package_name,

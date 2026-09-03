@@ -26,15 +26,58 @@ from visualization_msgs.msg import Marker, MarkerArray
 from rcl_interfaces.srv import GetParameters
 from std_srvs.srv import Trigger
 from easy_motion_msgs.srv import DiceIdentification, AttachObject, DetachObject
-from drims_dice_simulator.dice_spawner_parameters import dice_spawner_node
+
+
+class Params:
+    pass
+
+
+class StandardParamListener:
+    def __init__(self, node):
+        self.node = node
+        self.declare_all()
+
+    def declare_all(self):
+        def decl(name, default):
+            if not self.node.has_parameter(name):
+                self.node.declare_parameter(name, default)
+
+        decl("face_up", 0)
+        decl("dice_size", 0.027)
+        decl("random_position", False)
+        decl("x_min", -0.20)
+        decl("x_max", 0.20)
+        decl("y_min", 0.35)
+        decl("y_max", 0.70)
+        decl("surface_height", 0.0)
+        decl("position", [0.0, 0.5, 0.0])
+        decl("yaw", 0.0)
+        decl("pips_distance", 0.26)
+        decl("pip_diameter", 0.21)
+
+    def get_params(self):
+        p = Params()
+        p.face_up = int(self.node.get_parameter("face_up").value)
+        p.dice_size = float(self.node.get_parameter("dice_size").value)
+        p.random_position = bool(self.node.get_parameter("random_position").value)
+        p.x_min = float(self.node.get_parameter("x_min").value)
+        p.x_max = float(self.node.get_parameter("x_max").value)
+        p.y_min = float(self.node.get_parameter("y_min").value)
+        p.y_max = float(self.node.get_parameter("y_max").value)
+        p.surface_height = float(self.node.get_parameter("surface_height").value)
+        p.position = list(self.node.get_parameter("position").value)
+        p.yaw = float(self.node.get_parameter("yaw").value)
+        p.pips_distance = float(self.node.get_parameter("pips_distance").value)
+        p.pip_diameter = float(self.node.get_parameter("pip_diameter").value)
+        return p
 
 
 class DiceSpawner(Node):
     def __init__(self):
         super().__init__("dice_spawner_node")
 
-        # Initialize parameter listener from generate_parameter_library
-        self.param_listener = dice_spawner_node.ParamListener(self)
+        # Initialize parameter listener with standard ROS 2 parameters
+        self.param_listener = StandardParamListener(self)
         self.params = self.param_listener.get_params()
 
         self.dice_name = "dice"
@@ -73,7 +116,7 @@ class DiceSpawner(Node):
         package_path = get_package_share_directory("drims_dice_simulator")
         self.dice_mesh_path = os.path.join(package_path, "urdf", "Dice.obj")
 
-        self.dice_tf_spawned = False
+        self.dice_tf_spawned = True
         self.is_grasped = False
 
         self.service_callback_group = ReentrantCallbackGroup()
@@ -141,7 +184,8 @@ class DiceSpawner(Node):
         self.marker_pub = self.create_publisher(MarkerArray, "/visualization_marker_array", 10)
         self.marker_timer = self.create_timer(0.2, self.publish_pips_marker)
 
-        # Dynamic transform publisher timer at 200Hz (every 0.005 seconds) for high-rate synchronization
+        # Dynamic transform publisher timer at 200Hz (every 0.005 seconds)
+        # for high-rate synchronization
         self.tf_timer = self.create_timer(0.005, self.publish_all_transforms)
 
         self.precompute_meshes()
@@ -447,10 +491,12 @@ class DiceSpawner(Node):
         future = self.apply_scene_client.call_async(req)
         future.add_done_callback(self.spawn_dice_result)
 
-        q_str = f"[{self.orientation_q[0]:.4f}, {self.orientation_q[1]:.4f}, {self.orientation_q[2]:.4f}, {self.orientation_q[3]:.4f}]"
+        qx, qy, qz, qw = self.orientation_q
+        q_str = f"[{qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f}]"
         self.get_logger().info(
             f"Spawned dice with:\n - face {self.face} up \n - position ["
-            f"{self.position.x:.4f}, {self.position.y:.4f}, {self.position.z:.4f}] \n - orientation {q_str} \n - size {self.dice_size}"
+            f"{self.position.x:.4f}, {self.position.y:.4f}, {self.position.z:.4f}] \n"
+            f" - orientation {q_str} \n - size {self.dice_size}"
         )
 
     def spawn_dice_result(self, future):
@@ -701,36 +747,17 @@ class DiceSpawner(Node):
 
     def resolve_spawn_orientation(self, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
         self.params = self.param_listener.get_params()
-        orientation_param = (
-            list(self.params.orientation)
-            if hasattr(self.params, "orientation") and self.params.orientation
-            else []
-        )
-        is_nonzero = any(v != 0 for v in orientation_param)
 
-        if is_nonzero and len(orientation_param) == 3:
-            r, p, y = orientation_param[0], orientation_param[1], orientation_param[2]
-            q_base = quaternion_from_euler(r, p, y)
-        elif is_nonzero and len(orientation_param) == 4:
-            q_base = np.array(orientation_param, dtype=float)
-            norm = np.linalg.norm(q_base)
-            if norm > 1e-6:
-                q_base = q_base / norm
-            else:
-                q_base = np.array([0.0, 0.0, 0.0, 1.0])
-        elif is_nonzero:
-            error_msg = (
-                f"Invalid orientation parameter length {len(orientation_param)}. "
-                "Expected 3 elements [roll, pitch, yaw] or 4 elements [x, y, z, w]."
-            )
-            self.get_logger().error(error_msg)
-            raise SystemExit(error_msg)
-        else:
-            face = self.params.face_up
-            self.face = face if 1 <= face <= 6 else random.randint(1, 6)
-            q_base = self.get_orientation_for_face(self.face)
+        face = self.params.face_up
+        self.face = face if 1 <= face <= 6 else random.randint(1, 6)
+        q_face = self.get_orientation_for_face(self.face)
 
+        yaw = float(getattr(self.params, "yaw", 0.0))
+        q_yaw = quaternion_from_euler(0.0, 0.0, yaw)
+
+        q_base = quaternion_multiply(q_yaw, q_face)
         q_world = quaternion_multiply([qx, qy, qz, qw], q_base)
+
         self.orientation_q = [
             float(q_world[0]),
             float(q_world[1]),
