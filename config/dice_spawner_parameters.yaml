@@ -1,14 +1,39 @@
 dice_spawner_node:
   ros__parameters:
-    face_up: 3
+    # Dice dimensions
     dice_size: 0.03
-    random_position: false
-    x_min: -0.20
-    x_max: 0.20
-    y_min: 0.35
-    y_max: 0.70
-    surface_height: 0.0
-    position: [0.15, 0.5, 0.0]
-    yaw: 1.4 #radians
     pips_distance: 0.26
     pip_diameter: 0.21
+
+    # Playing board dimensions (w.r.t the base_link)
+    selected_cell: 4 # Select the cell to spawn the dice in (1, 2, 3, or 4)
+    cell_1:
+      x_min: -0.35
+      x_max: 0.15
+      y_min: 0.50
+      y_max: 0.85
+      surface_height: -0.04
+    cell_2:
+      x_min: -0.30
+      x_max: 0.20
+      y_min: 0.50
+      y_max: 0.85
+      surface_height: -0.02
+    cell_3:
+      x_min: -0.28
+      x_max: 0.22
+      y_min: 0.35
+      y_max: 0.70
+      surface_height: -0.01
+    cell_4:
+      x_min: -0.30
+      x_max: 0.20
+      y_min: 0.50
+      y_max: 0.85
+      surface_height: -0.02
+
+    # Dice spawn parameters
+    random_position: false
+    position: [-0.1, 0.65, -0.04]  # w.r.t the base_link
+    yaw: 0.5 #radians
+    face_up: 3

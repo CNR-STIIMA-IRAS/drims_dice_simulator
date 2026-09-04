@@ -20,23 +20,32 @@ All parameters default to values defined in [dice_spawner_parameters.yaml](confi
 - **`dice_size`** *(double, default: `0.027`)*  
   Edge length of the dice (in meters).
 
-- **`position`** *(double_array[3], default: `[0.6, 0.2, 0.0]`)*  
+- **`selected_cell`** *(int, default: `3`)*  
+  Selects which cell preset is active. The node reads the matching nested block (`cell_1`, `cell_2`, `cell_3`, `cell_4`) and applies that cell's `x_min`, `x_max`, `y_min`, `y_max`, and `surface_height` values.
+
+- **`cell_1` / `cell_2` / `cell_3` / `cell_4`** *(nested dict)*  
+  Per-cell spawn bounds in the `base_link` frame. Each cell contains:
+  - `x_min`, `x_max`
+  - `y_min`, `y_max`
+  - `surface_height`
+
+- **`position`** *(double_array[3], default: `[0.0, 0.5, 0.0]`)*  
   XYZ spawn position in the `base_link` frame.
 
-- **`orientation`** *(double_array, default: `[]`)*  
-  Initial dice orientation in the `base_link` frame specified as Roll-Pitch-Yaw `[roll, pitch, yaw]` in radians (3 elements) or Quaternion `[x, y, z, w]` (4 elements). Overrides `face_up` when provided.
+- **`yaw`** *(double, default: `0.0`)*  
+  In-plane rotation around the Z-axis in radians. This is the dice's yaw, not a full roll-pitch-yaw tuple.
 
 - **`random_position`** *(bool, default: `false`)*  
-  Whether to spawn at a random position within bounds.
+  Whether to spawn at a random X/Y position inside the selected cell bounds. This parameter only randomizes position, not the face or yaw.
 
 - **`x_min`** / **`x_max`** *(double, default: `0.40` / `0.80`)*  
-  X-coordinate boundaries for random spawning.
+  X-coordinate boundaries for random spawning or the active selected cell override.
 
 - **`y_min`** / **`y_max`** *(double, default: `-0.20` / `0.40`)*  
-  Y-coordinate boundaries for random spawning.
+  Y-coordinate boundaries for random spawning or the active selected cell override.
 
 - **`surface_height`** *(double, default: `0.0`)*  
-  Surface height (in meters).
+  Height of the board surface in the `base_link` frame.
 
 - **`pips_distance`** *(double, default: `0.26`)*  
   Distance of pips from the center of the face (as a fraction of dice size).
@@ -56,9 +65,14 @@ Fixed face (e.g., “6”), custom pip spacing and dice size:
 ros2 launch drims_dice_simulator spawn_dice.launch.py face_up:=6 dice_size:=0.05 pips_distance:=0.22
 ```
 
-Custom position and orientation (Roll-Pitch-Yaw):
+Fixed position and yaw:
 ```bash
-ros2 launch drims_dice_simulator spawn_dice.launch.py position:="[0.6, 0.2, 0.0]" orientation:="[0.0, 0.0, 1.57]"
+ros2 launch drims_dice_simulator spawn_dice.launch.py position:="[-0.1, 0.65, -0.04]" yaw:=0.5
+```
+
+Select a different board cell:
+```bash
+ros2 launch drims_dice_simulator spawn_dice.launch.py selected_cell:=2
 ```
 
 ## Coordinate Frames (TF)

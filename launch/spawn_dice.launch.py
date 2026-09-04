@@ -15,6 +15,7 @@ def launch_setup(context, *args, **kwargs):
         "position",
         "yaw",
         "random_position",
+        "cell_id",
         "x_min",
         "x_max",
         "y_min",
@@ -74,49 +75,54 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "face_up",
-                default_value="__default__",
+                default_value="3",
                 description="Face number facing upward (1–6, 0 = random)",
             ),
             DeclareLaunchArgument(
                 "dice_size",
-                default_value="__default__",
+                default_value="0.03",
                 description="Length of the dice edge (in meters)",
             ),
             DeclareLaunchArgument(
                 "position",
-                default_value="__default__",
+                default_value="[-0.1, 0.65, -0.04]",
                 description="Initial dice position [x, y, z]",
             ),
             DeclareLaunchArgument(
                 "yaw",
-                default_value="__default__",
+                default_value="0.5",
                 description="In-plane rotation angle around Z-axis (in radians)",
             ),
             DeclareLaunchArgument(
                 "random_position",
-                default_value="__default__",
+                default_value="false",
                 description="Whether to spawn at a random position within bounds",
             ),
             DeclareLaunchArgument(
-                "x_min", default_value="__default__", description="Minimum X bounds"
+                "selected_cell",
+                default_value="4",
+                description="Selected cell preset to use for x/y bounds and surface height",
             ),
             DeclareLaunchArgument(
-                "x_max", default_value="__default__", description="Maximum X bounds"
+                "x_min", default_value="-0.30", description="Minimum X bounds"
             ),
             DeclareLaunchArgument(
-                "y_min", default_value="__default__", description="Minimum Y bounds"
+                "x_max", default_value="0.20", description="Maximum X bounds"
             ),
             DeclareLaunchArgument(
-                "y_max", default_value="__default__", description="Maximum Y bounds"
+                "y_min", default_value="0.50", description="Minimum Y bounds"
             ),
             DeclareLaunchArgument(
-                "surface_height", default_value="__default__", description="Surface height"
+                "y_max", default_value="0.85", description="Maximum Y bounds"
             ),
             DeclareLaunchArgument(
-                "pips_distance", default_value="__default__", description="Pips distance bounds"
+                "surface_height", default_value="-0.02", description="Surface height"
             ),
             DeclareLaunchArgument(
-                "pip_diameter", default_value="__default__", description="Pips diameter bounds"
+                "pips_distance", default_value="0.26", description="Pips distance bounds"
+            ),
+            DeclareLaunchArgument(
+                "pip_diameter", default_value="0.21", description="Pips diameter bounds"
             ),
             OpaqueFunction(function=launch_setup),
         ]

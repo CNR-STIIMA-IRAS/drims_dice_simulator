@@ -45,6 +45,27 @@ class StandardParamListener:
         decl("face_up", 0)
         decl("dice_size", 0.027)
         decl("random_position", False)
+        decl("selected_cell", 3)
+        decl("cell_1.x_min", -0.35)
+        decl("cell_1.x_max", 0.15)
+        decl("cell_1.y_min", 0.50)
+        decl("cell_1.y_max", 0.85)
+        decl("cell_1.surface_height", -0.04)
+        decl("cell_2.x_min", -0.30)
+        decl("cell_2.x_max", 0.20)
+        decl("cell_2.y_min", 0.50)
+        decl("cell_2.y_max", 0.85)
+        decl("cell_2.surface_height", -0.02)
+        decl("cell_3.x_min", -0.28)
+        decl("cell_3.x_max", 0.22)
+        decl("cell_3.y_min", 0.35)
+        decl("cell_3.y_max", 0.70)
+        decl("cell_3.surface_height", -0.01)
+        decl("cell_4.x_min", -0.30)
+        decl("cell_4.x_max", 0.20)
+        decl("cell_4.y_min", 0.50)
+        decl("cell_4.y_max", 0.85)
+        decl("cell_4.surface_height", -0.02)
         decl("x_min", -0.20)
         decl("x_max", 0.20)
         decl("y_min", 0.35)
@@ -54,6 +75,18 @@ class StandardParamListener:
         decl("yaw", 0.0)
         decl("pips_distance", 0.26)
         decl("pip_diameter", 0.21)
+
+    def apply_selected_cell(self, p):
+        cell_id = int(self.node.get_parameter("selected_cell").value)
+        cell_param_prefix = f"cell_{cell_id}"
+
+        if self.node.has_parameter(f"{cell_param_prefix}.x_min"):
+            p.x_min = float(self.node.get_parameter(f"{cell_param_prefix}.x_min").value)
+            p.x_max = float(self.node.get_parameter(f"{cell_param_prefix}.x_max").value)
+            p.y_min = float(self.node.get_parameter(f"{cell_param_prefix}.y_min").value)
+            p.y_max = float(self.node.get_parameter(f"{cell_param_prefix}.y_max").value)
+            p.surface_height = float(self.node.get_parameter(f"{cell_param_prefix}.surface_height").value)
+        return p
 
     def get_params(self):
         p = Params()
@@ -69,7 +102,16 @@ class StandardParamListener:
         p.yaw = float(self.node.get_parameter("yaw").value)
         p.pips_distance = float(self.node.get_parameter("pips_distance").value)
         p.pip_diameter = float(self.node.get_parameter("pip_diameter").value)
-        return p
+        p.selected_cell = int(self.node.get_parameter("selected_cell").value)
+        return self.apply_selected_cell(p)
+
+
+def generate_random_spawn_pose(x_min, x_max, y_min, y_max):
+    x_spawn = random.uniform(x_min, x_max)
+    y_spawn = random.uniform(y_min, y_max)
+    yaw = random.uniform(-math.pi, math.pi)
+    face = random.randint(1, 6)
+    return x_spawn, y_spawn, yaw, face
 
 
 class DiceSpawner(Node):
@@ -192,6 +234,37 @@ class DiceSpawner(Node):
         self.spawn_dice_with_mesh()
         self.dice_face_publisher_.publish(Int16(data=self.face))
         self.gravity_timer = self.create_timer(0.5, self.gravity_timer_callback)
+
+    def __del__(self):
+        try:
+            self._shutdown_cleanup()
+        except Exception:
+            pass
+
+    def destroy_node(self):
+        try:
+            self._shutdown_cleanup()
+        except Exception:
+            pass
+        super().destroy_node()
+
+    def _shutdown_cleanup(self):
+        try:
+            if hasattr(self, "apply_scene_client") and self.apply_scene_client is not None:
+                remove_dice = CollisionObject()
+                remove_dice.id = self.dice_name
+                remove_dice.operation = CollisionObject.REMOVE
+
+                scene = PlanningScene()
+                scene.world.collision_objects = [remove_dice]
+                scene.is_diff = True
+
+                req = ApplyPlanningScene.Request(scene=scene)
+                future = self.apply_scene_client.call_async(req)
+                if future is not None:
+                    self.internal_executor.spin_until_future_complete(future, timeout_sec=2.0)
+        except Exception as e:
+            self.get_logger().warning(f"Failed to remove stale dice object during shutdown: {e}")
 
     def get_group_name(self):
         # Retrieve 'group_name' from /motion_server_node
@@ -672,11 +745,14 @@ class DiceSpawner(Node):
         pos_param = self.params.position
 
         if random_pos:
-            x_spawn = random.uniform(x_min, x_max)
-            y_spawn = random.uniform(y_min, y_max)
+            x_spawn, y_spawn, yaw_rand, face_rand = generate_random_spawn_pose(
+                x_min, x_max, y_min, y_max
+            )
+            self.params.yaw = yaw_rand
+            self.params.face_up = face_rand
             self.get_logger().info(
-                "Random position spawning enabled (w.r.t base_link). "
-                f"Generated: x={x_spawn:.4f}, y={y_spawn:.4f}"
+                "Random pose spawning enabled (w.r.t base_link). "
+                f"Generated: x={x_spawn:.4f}, y={y_spawn:.4f}, yaw={yaw_rand:.4f}, face={face_rand}"
             )
         else:
             x_spawn = pos_param[0]
@@ -749,7 +825,9 @@ class DiceSpawner(Node):
         self.params = self.param_listener.get_params()
 
         face = self.params.face_up
-        self.face = face if 1 <= face <= 6 else random.randint(1, 6)
+        if face is None or not (1 <= int(face) <= 6):
+            face = random.randint(1, 6)
+        self.face = int(face)
         q_face = self.get_orientation_for_face(self.face)
 
         yaw = float(getattr(self.params, "yaw", 0.0))
