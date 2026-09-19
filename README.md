@@ -21,9 +21,9 @@ All parameters default to values defined in [dice_spawner_parameters.yaml](confi
   Edge length of the dice (in meters).
 
 - **`selected_cell`** *(int, default: `3`)*  
-  Selects which cell preset is active. The node reads the matching nested block (`cell_1`, `cell_2`, `cell_3`, `cell_4`) and applies that cell's `x_min`, `x_max`, `y_min`, `y_max`, and `surface_height` values.
+  Selects which cell preset is active. The node reads the matching nested block (`cell_1`, `cell_2`, `cell_3`, `cell_4`, `cell_5`) and applies that cell's `x_min`, `x_max`, `y_min`, `y_max`, and `surface_height` values (`cell_5` corresponds to the TIAGo cell).
 
-- **`cell_1` / `cell_2` / `cell_3` / `cell_4`** *(nested dict)*  
+- **`cell_1` / `cell_2` / `cell_3` / `cell_4` / `cell_5`** *(nested dict)*  
   Per-cell spawn bounds in the `base_link` frame. Each cell contains:
   - `x_min`, `x_max`
   - `y_min`, `y_max`
@@ -79,25 +79,25 @@ ros2 launch drims_dice_simulator spawn_dice.launch.py selected_cell:=2
 
 The node publishes the following frames continuously on `/tf` at 200Hz:
 
-- **`dice_com_tf`**  
+- **`die_centroid`** (legacy alias `dice_com_tf`)  
   Located at the center of mass of the dice.
 - **`face{1..6}_tf`**  
   Located at the center of each of the six faces on the surface of the dice.
-- **`dice_tf`**  
+- **`die_top_face`** (legacy alias `dice_tf`)  
   Aligned with the face currently pointing upward. This frame can be used for grasp planning (e.g., positioning the robot gripper over the dice as a pre-grasp pose).
 
 ## Services
 
-- **`/dice_identification`** (`easy_motion_msgs/srv/DiceIdentification`)  
-  Triggers face identification to determine which side is facing up, updates `dice_tf`, and returns the pose.
+- **`/die_identification`** (`drims_homework/srv/DieIdentification`)  
+  Triggers face identification to determine which side is facing up, updates `die_top_face` / `dice_tf`, and returns the pose.
   
   *Command to call:*
   ```bash
-  ros2 service call /dice_identification easy_motion_msgs/srv/DiceIdentification "{}"
+  ros2 service call /die_identification drims_homework/srv/DieIdentification "{}"
   ```
 
-- **`/reset_dice`** (`std_srvs/srv/Trigger`)  
-  Resets the simulation. It detaches the dice from the gripper, removes it from the planning scene, resolves a new spawn position, spawns the monolithic body, and updates `dice_tf`.
+- **`/reset_die`** (`std_srvs/srv/Trigger`)  
+  Resets the simulation. It detaches the die from the gripper, removes it from the planning scene, resolves a new spawn position, spawns the monolithic body, and updates `die_top_face` / `dice_tf`.
   
   *Command to call:*
   ```bash

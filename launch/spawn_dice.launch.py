@@ -15,7 +15,7 @@ def launch_setup(context, *args, **kwargs):
         "position",
         "yaw",
         "random_position",
-        "cell_id",
+        "selected_cell",
         "x_min",
         "x_max",
         "y_min",
@@ -23,26 +23,43 @@ def launch_setup(context, *args, **kwargs):
         "surface_height",
         "pips_distance",
         "pip_diameter",
+        "base_link",
+        "single_face_detection",
     ]
 
     node_params = {}
+    position_specified = False
+    random_pos_specified = False
+
     for name in param_names:
         try:
             val_str = context.perform_substitution(LaunchConfiguration(name))
-            if val_str != "__default__":
-                if name == "face_up":
-                    node_params[name] = int(val_str)
+            if val_str != "":
+                if name in ["face_up", "selected_cell"]:
+                    node_params[name] = int(float(val_str))
                 elif name == "random_position":
                     node_params[name] = val_str.lower() in ["true", "1", "yes"]
+                    if "random_position" in context.launch_configurations:
+                        random_pos_specified = True
                 elif name == "position":
                     cleaned = val_str.strip("[]")
                     if cleaned:
                         node_params[name] = [float(x.strip()) for x in cleaned.split(",")]
+                        position_specified = True
+                elif name == "base_link":
+                    node_params[name] = str(val_str)
+                elif name == "single_face_detection":
+                    node_params[name] = val_str.lower() in ["true", "1", "yes"]
                 else:
                     node_params[name] = float(val_str)
         except Exception:
             # If a launch configuration is not declared or fails substitution, ignore it
             pass
+
+    if position_specified and not random_pos_specified:
+        node_params["random_position"] = False
+
+    node_params["use_sim_time"] = True
 
     params_list = []
     if os.path.exists(params_file):
@@ -53,6 +70,7 @@ def launch_setup(context, *args, **kwargs):
     node = Node(
         package="drims_dice_simulator",
         executable="dice_spawner",
+        name="dice_spawner_node",
         output="screen",
         parameters=params_list,
     )
@@ -85,8 +103,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "position",
-                default_value="[-0.1, 0.65, -0.04]",
-                description="Initial dice position [x, y, z]",
+                default_value="",
+                description="Initial dice position [x, y, z] (overrides random_position if specified)",
             ),
             DeclareLaunchArgument(
                 "yaw",
@@ -95,13 +113,13 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "random_position",
-                default_value="false",
+                default_value="",
                 description="Whether to spawn at a random position within bounds",
             ),
             DeclareLaunchArgument(
                 "selected_cell",
                 default_value="4",
-                description="Selected cell preset to use for x/y bounds and surface height",
+                description="Selected cell preset (1–5, 5 = TIAGo cell) to use for x/y bounds and surface height",
             ),
             DeclareLaunchArgument(
                 "x_min", default_value="-0.30", description="Minimum X bounds"
@@ -123,6 +141,16 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "pip_diameter", default_value="0.21", description="Pips diameter bounds"
+            ),
+            DeclareLaunchArgument(
+                "base_link",
+                default_value="",
+                description="Base link frame name",
+            ),
+            DeclareLaunchArgument(
+                "single_face_detection",
+                default_value="",
+                description="If true, DieIdentification3D only reports the top face; front_face/front_face_pips are returned as unknown, simulating a detector that only captures the top face",
             ),
             OpaqueFunction(function=launch_setup),
         ]

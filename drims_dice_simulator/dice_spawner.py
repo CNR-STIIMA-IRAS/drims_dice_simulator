@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import math
 import os
 import time
@@ -22,10 +23,12 @@ from moveit_msgs.msg import (
 )
 from shape_msgs.msg import Mesh, MeshTriangle
 from std_msgs.msg import Int16, ColorRGBA
-from visualization_msgs.msg import Marker, MarkerArray
-from rcl_interfaces.srv import GetParameters
 from std_srvs.srv import Trigger
-from easy_motion_msgs.srv import DiceIdentification, AttachObject, DetachObject
+from rcl_interfaces.srv import GetParameters
+from visualization_msgs.msg import Marker, MarkerArray
+from drims_homework_interfaces.srv import DieIdentification, DieIdentification3D
+from easy_motion_msgs.srv import AttachObject, DetachObject
+HAS_DIE_ID_3D = True
 
 
 class Params:
@@ -44,7 +47,7 @@ class StandardParamListener:
 
         decl("face_up", 0)
         decl("dice_size", 0.027)
-        decl("random_position", False)
+        decl("random_position", True)
         decl("selected_cell", 3)
         decl("cell_1.x_min", -0.35)
         decl("cell_1.x_max", 0.15)
@@ -66,6 +69,12 @@ class StandardParamListener:
         decl("cell_4.y_min", 0.50)
         decl("cell_4.y_max", 0.85)
         decl("cell_4.surface_height", -0.02)
+        # Cell 5 (TIAGo cell)
+        decl("cell_5.x_min", 0.45)
+        decl("cell_5.x_max", 0.75)
+        decl("cell_5.y_min", -0.10)
+        decl("cell_5.y_max", 0.25)
+        decl("cell_5.surface_height", 0.72)
         decl("x_min", -0.20)
         decl("x_max", 0.20)
         decl("y_min", 0.35)
@@ -75,6 +84,8 @@ class StandardParamListener:
         decl("yaw", 0.0)
         decl("pips_distance", 0.26)
         decl("pip_diameter", 0.21)
+        decl("base_link", "base_link")
+        decl("single_face_detection", False)
 
     def apply_selected_cell(self, p):
         cell_id = int(self.node.get_parameter("selected_cell").value)
@@ -103,6 +114,8 @@ class StandardParamListener:
         p.pips_distance = float(self.node.get_parameter("pips_distance").value)
         p.pip_diameter = float(self.node.get_parameter("pip_diameter").value)
         p.selected_cell = int(self.node.get_parameter("selected_cell").value)
+        p.base_link = str(self.node.get_parameter("base_link").value)
+        p.single_face_detection = bool(self.node.get_parameter("single_face_detection").value)
         return self.apply_selected_cell(p)
 
 
@@ -150,10 +163,13 @@ class DiceSpawner(Node):
             self.get_logger().info("Using 'world' as world frame.")
             self.world = "world"
         else:
-            self.get_logger().info("Using 'base_footprint' as world frame.")
-            self.world = "base_footprint"
+            self.get_logger().info(f"Using '{self.params.base_link}' as world frame.")
+            self.world = self.params.base_link
 
         self.resolve_spawn_position()
+        self.get_logger().info(
+            f"Dice Spawner initialized: single_face_detection={self.params.single_face_detection}, face_up={self.face}"
+        )
 
         package_path = get_package_share_directory("drims_dice_simulator")
         self.dice_mesh_path = os.path.join(package_path, "urdf", "Dice.obj")
@@ -165,11 +181,20 @@ class DiceSpawner(Node):
         self.get_scene_callback_group = ReentrantCallbackGroup()
 
         self.srv = self.create_service(
-            DiceIdentification,
+            DieIdentification,
             "/dice_identification",
             self.get_dice_state_callback,
             callback_group=self.service_callback_group,
         )
+
+        if HAS_DIE_ID_3D and DieIdentification3D is not None:
+            self.srv_3d = self.create_service(
+                DieIdentification3D,
+                "die_identification_3d",
+                self.die_identification_3d_callback,
+                callback_group=self.service_callback_group,
+            )
+            self.get_logger().info("Service 'die_identification_3d' (DieIdentification3D) ready.")
 
         self.reset_srv = self.create_service(
             Trigger,
@@ -210,12 +235,8 @@ class DiceSpawner(Node):
         while not self.detach_client.wait_for_service(timeout_sec=2.0):
             self.get_logger().info("Waiting for /detach_object service...")
 
-        # Precompute face transforms (offset and rotation) to optimize TF publishing loop
-        self.face_transforms = {}
-        for face_id, normal in self.face_normals.items():
-            offset = (self.dice_size / 2.0) * normal
-            q_face = self.get_quaternion_from_normal(normal)
-            self.face_transforms[face_id] = (offset, q_face)
+        # Precompute face transforms relative to the top face frame to ensure die_centroid is aligned with top face TF
+        self.update_face_transforms()
 
         # Initialize grasped state variables for dynamic TF publishing
         self.parent_frame = self.world
@@ -224,11 +245,9 @@ class DiceSpawner(Node):
 
         # Marker publisher for the pips in RViz
         self.marker_pub = self.create_publisher(MarkerArray, "/visualization_marker_array", 10)
-        self.marker_timer = self.create_timer(0.2, self.publish_pips_marker)
 
-        # Dynamic transform publisher timer at 200Hz (every 0.005 seconds)
-        # for high-rate synchronization
-        self.tf_timer = self.create_timer(0.005, self.publish_all_transforms)
+        # Dynamic transform and pips publisher timer at 50Hz (every 0.02 seconds)
+        self.tf_timer = self.create_timer(0.02, self.publish_all_transforms)
 
         self.precompute_meshes()
         self.spawn_dice_with_mesh()
@@ -268,13 +287,16 @@ class DiceSpawner(Node):
 
     def get_group_name(self):
         # Retrieve 'group_name' from /motion_server_node
-
         self.group_name = None
         param_client = self.internal_node.create_client(
             GetParameters, "/motion_server_node/get_parameters"
         )
-        while not param_client.wait_for_service(timeout_sec=2.0):
-            self.get_logger().info("Waiting for /motion_server_node/get_parameters service...")
+        if not param_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warning(
+                "Timed out waiting for /motion_server_node/get_parameters service. Using fallback group_name ('arm_left_torso')."
+            )
+            self.group_name = "arm_left_torso"
+            return
 
         param_request = GetParameters.Request()
         param_request.names = ["move_group_name"]
@@ -288,12 +310,11 @@ class DiceSpawner(Node):
                 self.group_name = values[0].string_value
                 self.get_logger().info(f"Retrieved group_name: {self.group_name}")
             else:
-                self.get_logger().warning("Parameter 'group_name' is empty or not set.")
-                self.group_name = "default_group"
+                self.get_logger().warning("Parameter 'move_group_name' is empty or not set. Using default ('arm_left_torso').")
+                self.group_name = "arm_left_torso"
         else:
-            raise RuntimeError(
-                "Failed to get 'group_name' from /motion_server_node. Using default."
-            )
+            self.get_logger().warning("Failed to get 'move_group_name' from /motion_server_node. Using default ('arm_left_torso').")
+            self.group_name = "arm_left_torso"
 
     def publish_all_static_transforms(self):
         self.publish_all_transforms()
@@ -303,7 +324,7 @@ class DiceSpawner(Node):
         now = self.get_clock().now().to_msg()
 
         if self.is_grasped:
-            parent_frame = self.parent_frame
+            parent_frame = self.parent_frame if self.parent_frame else self.world
             translation = Vector3(
                 x=self.current_pose.position.x,
                 y=self.current_pose.position.y,
@@ -325,7 +346,7 @@ class DiceSpawner(Node):
         tf_com = TransformStamped()
         tf_com.header.stamp = now
         tf_com.header.frame_id = parent_frame
-        tf_com.child_frame_id = "dice_com_tf"
+        tf_com.child_frame_id = "die_centroid"
         tf_com.transform.translation = translation
         tf_com.transform.rotation = rotation
         transforms.append(tf_com)
@@ -333,7 +354,7 @@ class DiceSpawner(Node):
         for face_id, (offset, q_face) in self.face_transforms.items():
             tf_face = TransformStamped()
             tf_face.header.stamp = now
-            tf_face.header.frame_id = "dice_com_tf"
+            tf_face.header.frame_id = "die_centroid"
             tf_face.child_frame_id = f"face{face_id}_tf"
             tf_face.transform.translation.x = float(offset[0])
             tf_face.transform.translation.y = float(offset[1])
@@ -344,22 +365,69 @@ class DiceSpawner(Node):
             tf_face.transform.rotation.w = q_face[3]
             transforms.append(tf_face)
 
-        # Publish dice_tf (aligned with the upward face) only if spawned
+        # Publish die_top_face (aligned with upward face, +X facing front face towards robot) only if spawned
         if self.dice_tf_spawned:
-            tf_dice = TransformStamped()
-            tf_dice.header.stamp = now
-            tf_dice.header.frame_id = f"face{self.face}_tf"
-            tf_dice.child_frame_id = "dice_tf"
-            tf_dice.transform.translation.x = 0.0
-            tf_dice.transform.translation.y = 0.0
-            tf_dice.transform.translation.z = 0.0
-            tf_dice.transform.rotation.x = 0.0
-            tf_dice.transform.rotation.y = 0.0
-            tf_dice.transform.rotation.z = 0.0
-            tf_dice.transform.rotation.w = 1.0
-            transforms.append(tf_dice)
+            top_face_id = getattr(self, "face", 3) or 3
+            q_die = self.orientation_q
+            top_normal_local = self.face_normals.get(top_face_id, np.array([0.0, 0.0, 1.0]))
+            top_vec_world = np.array(self.rotate_vector(top_normal_local, q_die))
+
+            die_pos = np.array([self.position.x, self.position.y, self.position.z])
+            to_robot_2d = np.array([-die_pos[0], -die_pos[1], 0.0])
+            norm_to_robot = np.linalg.norm(to_robot_2d[:2])
+            to_robot_dir = to_robot_2d / norm_to_robot if norm_to_robot > 1e-6 else np.array([-1.0, 0.0, 0.0])
+
+            best_front_face = None
+            best_front_dot = -float("inf")
+            opposite_top_face = 7 - top_face_id
+
+            for fid in range(1, 7):
+                if fid == top_face_id or fid == opposite_top_face:
+                    continue
+                f_norm_local = self.face_normals.get(fid, np.array([1.0, 0.0, 0.0]))
+                f_vec_world = np.array(self.rotate_vector(f_norm_local, q_die))
+                dot = np.dot(f_vec_world, to_robot_dir)
+                if dot > best_front_dot:
+                    best_front_dot = dot
+                    best_front_face = fid
+
+            if best_front_face is None:
+                best_front_face = (top_face_id % 6) + 1
+
+            front_normal_local = self.face_normals.get(best_front_face, np.array([1.0, 0.0, 0.0]))
+            front_vec_world = np.array(self.rotate_vector(front_normal_local, q_die))
+
+            z_ax = top_vec_world / np.linalg.norm(top_vec_world)
+            x_proj = front_vec_world - np.dot(front_vec_world, z_ax) * z_ax
+            norm_x = np.linalg.norm(x_proj)
+            x_ax = x_proj / norm_x if norm_x > 1e-6 else np.array([1.0, 0.0, 0.0])
+            y_ax = np.cross(z_ax, x_ax)
+            y_norm = np.linalg.norm(y_ax)
+            if y_norm > 1e-6:
+                y_ax = y_ax / y_norm
+            x_ax = np.cross(y_ax, z_ax)
+
+            R_mat = np.column_stack((x_ax, y_ax, z_ax))
+            try:
+                from scipy.spatial.transform import Rotation
+                q_arr = Rotation.from_matrix(R_mat).as_quat()
+                top_rot = Quaternion(x=float(q_arr[0]), y=float(q_arr[1]), z=float(q_arr[2]), w=float(q_arr[3]))
+            except Exception:
+                top_rot = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+
+            tf_top = TransformStamped()
+            tf_top.header.stamp = now
+            tf_top.header.frame_id = self.world
+            tf_top.child_frame_id = "die_top_face"
+            top_pos = die_pos + (self.dice_size / 2.0) * z_ax
+            tf_top.transform.translation.x = float(top_pos[0])
+            tf_top.transform.translation.y = float(top_pos[1])
+            tf_top.transform.translation.z = float(top_pos[2])
+            tf_top.transform.rotation = top_rot
+            transforms.append(tf_top)
 
         self.tf_broadcaster.sendTransform(transforms)
+        self.publish_pips_marker(now)
 
     def update_dice_tf_from_scene(self, result=None):
         try:
@@ -381,22 +449,27 @@ class DiceSpawner(Node):
 
                 result = future.result()
 
-            # --- Check attachment state of dice ---
-            dice_attached = False
+            is_found_attached = False
             attached_link = None
             dice_touch_links = []
 
             for attached_obj in result.scene.robot_state.attached_collision_objects:
                 if attached_obj.object.id == self.dice_name:
-                    dice_attached = True
+                    is_found_attached = True
+                    self.is_grasped = True
                     attached_link = attached_obj.link_name
                     dice_touch_links = attached_obj.touch_links
+                    p_frame = attached_obj.link_name if attached_obj.link_name else attached_obj.object.header.frame_id
+                    if not p_frame:
+                        p_frame = self.world
+                    self.publish_updated_die_centroid_tf(
+                        attached_obj.object.pose, p_frame
+                    )
+                    break
 
-            self.is_grasped = dice_attached
-
-            if dice_attached:
+            if is_found_attached:
                 # Dynamically construct the full gripper touch links list from ACM
-                gripper_links = [attached_link]
+                gripper_links = [attached_link] if attached_link else []
                 acm = result.scene.allowed_collision_matrix
                 keywords = [
                     "finger", "knuckle", "tip", "pad", "hand", "gripper", "robotiq", "palm"
@@ -407,11 +480,10 @@ class DiceSpawner(Node):
                             gripper_links.append(name)
 
                 # Check if dice touch links need an update
-                needs_dice_update = not all(link in dice_touch_links for link in gripper_links)
+                needs_dice_update = not all(link in dice_touch_links for link in gripper_links) if dice_touch_links else False
 
                 if needs_dice_update:
                     self.get_logger().info("Coordinated Attachment: Updating dice grasp...")
-                    # 1. Prepare dice attached object with updated touch links
                     attached_dice = None
                     for attached_obj in result.scene.robot_state.attached_collision_objects:
                         if attached_obj.object.id == self.dice_name:
@@ -429,17 +501,16 @@ class DiceSpawner(Node):
                     req = ApplyPlanningScene.Request(scene=diff_scene)
                     self.apply_scene_client.call_async(req)
 
+                return True
+
             for obj in result.scene.world.collision_objects:
                 if obj.id == self.dice_name:
-                    self.publish_updated_dice_com_tf(obj.pose, obj.header.frame_id)
+                    self.is_grasped = False
+                    p_frame = obj.header.frame_id if obj.header.frame_id else self.world
+                    self.publish_updated_die_centroid_tf(obj.pose, p_frame)
                     return True
 
-            for attached_obj in result.scene.robot_state.attached_collision_objects:
-                if attached_obj.object.id == self.dice_name:
-                    self.publish_updated_dice_com_tf(
-                        attached_obj.object.pose, attached_obj.object.header.frame_id
-                    )
-                    return True
+            return False
 
             self.get_logger().warning(
                 f"Dice object '{self.dice_name}' not found in planning scene."
@@ -450,7 +521,9 @@ class DiceSpawner(Node):
             self.get_logger().error(f"Error in update_dice_tf_from_scene: {str(e)}")
             return False
 
-    def publish_updated_dice_com_tf(self, pose: Pose, parent_frame: str):
+    def publish_updated_die_centroid_tf(self, pose: Pose, parent_frame: str):
+        if not parent_frame:
+            parent_frame = self.world
         if parent_frame == self.world:
             self.position.x = pose.position.x
             self.position.y = pose.position.y
@@ -479,16 +552,17 @@ class DiceSpawner(Node):
             point.x, point.y, point.z = v * self.dice_size
             self.body_mesh.vertices.append(point)
 
-    def publish_pips_marker(self):
+    def publish_pips_marker(self, stamp=None):
         marker_array = MarkerArray()
+        if stamp is None:
+            stamp = self.get_clock().now().to_msg()
 
         S = self.dice_size
         D = self.params.pips_distance * S
         pip_diameter = self.params.pip_diameter * S
-        h = 0.001  # 1 mm height of cylinder
-        # We place the cylinder top 1.0 mm above the face surface
-        # to ensure it is always rendered in front of the dice
-        z_offset = -h / 2.0 + 0.0010
+        h = 0.0004  # 0.4 mm height (thin flat disc)
+        # Offset cylinder center so its bottom face sits flush with the face plane (+0.1 mm)
+        z_offset = h / 2.0 + 0.0001
 
         face_layouts = {
             1: [(0.0, 0.0)],
@@ -500,13 +574,12 @@ class DiceSpawner(Node):
         }
 
         pip_idx = 0
-        stamp_zero = rclpy.time.Time().to_msg()
 
         for face_id, pips in face_layouts.items():
             for (dx, dy) in pips:
                 marker = Marker()
                 marker.header.frame_id = f"face{face_id}_tf"
-                marker.header.stamp = stamp_zero
+                marker.header.stamp = stamp
                 marker.ns = "dice_pips"
                 marker.id = pip_idx
                 marker.type = Marker.CYLINDER
@@ -524,10 +597,12 @@ class DiceSpawner(Node):
                 marker.scale.y = pip_diameter
                 marker.scale.z = h
 
-                marker.color.r = 0.1
-                marker.color.g = 0.1
-                marker.color.b = 0.1
+                marker.color.r = 0.05
+                marker.color.g = 0.05
+                marker.color.b = 0.05
                 marker.color.a = 1.0
+
+                marker.frame_locked = True
 
                 marker_array.markers.append(marker)
                 pip_idx += 1
@@ -536,9 +611,15 @@ class DiceSpawner(Node):
 
     def spawn_dice_with_mesh(self):
         pose = PoseStamped()
-        pose.header.frame_id = "dice_com_tf"
-        pose.pose.position.y = 0.0
-        pose.pose.orientation.w = 1.0
+        pose.header.frame_id = self.world
+        pose.pose.position.x = float(self.position.x)
+        pose.pose.position.y = float(self.position.y)
+        pose.pose.position.z = float(self.position.z)
+
+        pose.pose.orientation.x = float(self.orientation_q[0])
+        pose.pose.orientation.y = float(self.orientation_q[1])
+        pose.pose.orientation.z = float(self.orientation_q[2])
+        pose.pose.orientation.w = float(self.orientation_q[3])
 
         # Body collision object (yellow-ochre)
         obj = CollisionObject()
@@ -609,6 +690,7 @@ class DiceSpawner(Node):
                     best_tf = tf
 
             self.face = best_face
+            self.update_face_transforms()
             self.dice_face_publisher_.publish(Int16(data=best_face))
 
             pose = PoseStamped()
@@ -644,6 +726,167 @@ class DiceSpawner(Node):
             response.success = False
             return response
 
+    def die_identification_3d_callback(self, request, response):
+        """ROS 2 service callback for DieIdentification3D mirroring die_detector_node."""
+        self.get_logger().info("Received DieIdentification3D request")
+        try:
+            success = self.update_dice_tf_from_scene()
+            if not success:
+                self.get_logger().warning("Failed to update dice transform from planning scene.")
+                response.top_face = "None"
+                response.front_face = "None"
+                response.top_face_pips = 0
+                response.front_face_pips = 0
+                response.success = False
+                return response
+
+            time.sleep(0.1)
+
+            now = rclpy.time.Time()
+            z_world = np.array([0.0, 0.0, 1.0])
+
+            best_top_face = None
+            best_top_dot = -float("inf")
+            best_top_tf = None
+            face_normals_world = {}
+
+            for face_id in range(1, 7):
+                try:
+                    tf = self.tf_buffer.lookup_transform(self.world, f"face{face_id}_tf", now)
+                    q = tf.transform.rotation
+                    q_np = np.array([q.x, q.y, q.z, q.w])
+                    z_local = np.array([0.0, 0.0, 1.0])
+                    z_world_face = self.rotate_vector(z_local, q_np)
+                    face_normals_world[face_id] = (z_world_face, tf)
+
+                    dot = np.dot(z_world_face, z_world)
+                    if dot > best_top_dot:
+                        best_top_dot = dot
+                        best_top_face = face_id
+                        best_top_tf = tf
+                except Exception as exc:
+                    self.get_logger().warning(f"TF lookup failed for face{face_id}_tf: {exc}")
+
+            if best_top_face is None or best_top_tf is None:
+                response.top_face = "None"
+                response.front_face = "None"
+                response.top_face_pips = 0
+                response.front_face_pips = 0
+                response.success = False
+                return response
+
+            self.face = best_top_face
+            self.update_face_transforms()
+            self.dice_face_publisher_.publish(Int16(data=best_top_face))
+
+            # Determine front face (most visible from robot base frame origin (0,0,0) in self.world)
+            die_pos = np.array([
+                best_top_tf.transform.translation.x,
+                best_top_tf.transform.translation.y,
+                best_top_tf.transform.translation.z
+            ])
+
+            # Vector pointing horizontally from die center towards robot base origin (0,0,0) in 2D (XY plane)
+            to_robot_2d = np.array([-die_pos[0], -die_pos[1], 0.0])
+            norm_to_robot = np.linalg.norm(to_robot_2d[:2])
+            if norm_to_robot > 1e-6:
+                to_robot_dir = to_robot_2d / norm_to_robot
+            else:
+                to_robot_dir = np.array([-1.0, 0.0, 0.0])
+
+            best_front_face = None
+            best_front_dot = -float("inf")
+            opposite_top_face = 7 - best_top_face
+
+            for face_id in range(1, 7):
+                if face_id == best_top_face or face_id == opposite_top_face:
+                    continue  # Exclude top and bottom (opposite) faces
+                z_world_face, _ = face_normals_world[face_id]
+                dot_front = np.dot(z_world_face, to_robot_dir)
+                if dot_front > best_front_dot:
+                    best_front_dot = dot_front
+                    best_front_face = face_id
+
+            if best_front_face is None:
+                best_front_face = (best_top_face % 6) + 1
+
+            stamp = self.get_clock().now().to_msg()
+            frame_id = self.world
+
+            # Populate response matching die_detector_node format.
+            # best_front_face is still computed above (and used below to derive
+            # die_top_face's orientation) even in single_face_detection mode -
+            # only the REPORTED front face identity is hidden, to simulate a
+            # detector that only captures the top face.
+            response.top_face = str(best_top_face)
+            response.top_face_pips = int(best_top_face)
+            if self.params.single_face_detection:
+                response.front_face = "None"
+                response.front_face_pips = 0
+            else:
+                response.front_face = str(best_front_face)
+                response.front_face_pips = int(best_front_face)
+
+            # Compute aligned orientation for die_top_face where +Z points UP and +X points towards front_face
+            top_vec, _ = face_normals_world[best_top_face]
+            front_vec, _ = face_normals_world[best_front_face]
+
+            z_ax = top_vec / np.linalg.norm(top_vec)
+            x_proj = front_vec - np.dot(front_vec, z_ax) * z_ax
+            norm_x = np.linalg.norm(x_proj)
+            if norm_x > 1e-6:
+                x_ax = x_proj / norm_x
+            else:
+                x_ax = np.array([1.0, 0.0, 0.0])
+            y_ax = np.cross(z_ax, x_ax)
+            y_norm = np.linalg.norm(y_ax)
+            if y_norm > 1e-6:
+                y_ax = y_ax / y_norm
+            x_ax = np.cross(y_ax, z_ax)  # Ensure exact orthonormality
+
+            R_mat = np.column_stack((x_ax, y_ax, z_ax))
+            try:
+                from scipy.spatial.transform import Rotation
+                q_arr = Rotation.from_matrix(R_mat).as_quat()
+                top_rot = Quaternion(x=float(q_arr[0]), y=float(q_arr[1]), z=float(q_arr[2]), w=float(q_arr[3]))
+            except Exception:
+                top_rot = best_top_tf.transform.rotation
+
+            # TransformStamped
+            response.die_top_tf.header.stamp = stamp
+            response.die_top_tf.header.frame_id = frame_id
+            response.die_top_tf.child_frame_id = "die_top_face"
+            response.die_top_tf.transform.translation.x = float(best_top_tf.transform.translation.x)
+            response.die_top_tf.transform.translation.y = float(best_top_tf.transform.translation.y)
+            response.die_top_tf.transform.translation.z = float(best_top_tf.transform.translation.z)
+            response.die_top_tf.transform.rotation = top_rot
+
+            # PoseStamped
+            response.die_top_pose.header.stamp = stamp
+            response.die_top_pose.header.frame_id = frame_id
+            response.die_top_pose.pose.position.x = float(best_top_tf.transform.translation.x)
+            response.die_top_pose.pose.position.y = float(best_top_tf.transform.translation.y)
+            response.die_top_pose.pose.position.z = float(best_top_tf.transform.translation.z)
+            response.die_top_pose.pose.orientation = top_rot
+
+            response.success = True
+            reported_front_face = "None (single_face_detection)" if self.params.single_face_detection else best_front_face
+            self.get_logger().info(
+                f"DieIdentification3D Result:\n"
+                f"  Top face: {best_top_face} | Front face: {reported_front_face}\n"
+                f"  Pose in {frame_id}: ({die_pos[0]:.3f}, {die_pos[1]:.3f}, {die_pos[2]:.3f})"
+            )
+            return response
+
+        except Exception as e:
+            self.get_logger().error(f"die_identification_3d_callback error: {e}")
+            response.top_face = "None"
+            response.front_face = "None"
+            response.top_face_pips = 0
+            response.front_face_pips = 0
+            response.success = False
+            return response
+
     def reset_dice_callback(self, request, response):
         self.get_logger().info("Received reset simulation request")
         try:
@@ -671,7 +914,7 @@ class DiceSpawner(Node):
             self.is_grasped = False
             self.parent_frame = self.world
 
-            # 3. Resolve spawn position and orientation w.r.t base_link and transform to world
+            # 3. Resolve spawn position and orientation w.r.t the base_link param frame and transform to world
             self.resolve_spawn_position()
 
             # 5. Publish new static transforms (this moves dice_com_tf and face_tfs)
@@ -724,7 +967,7 @@ class DiceSpawner(Node):
 
     def get_orientation_for_face(self, face):
         face_to_rpy = {
-            1: (0, math.pi, 0),
+            1: (math.pi, 0, 0),
             2: (0, math.pi / 2, 0),
             3: (math.pi / 2, 0, 0),
             4: (-math.pi / 2, 0, 0),
@@ -735,7 +978,7 @@ class DiceSpawner(Node):
         return quaternion_from_euler(*rpy)
 
     def resolve_spawn_position(self):
-        # 1. Spawning position/bounds validation w.r.t base_link
+        # 1. Spawning position/bounds validation w.r.t the base_link param frame
         random_pos = self.params.random_position
         x_min = self.params.x_min
         x_max = self.params.x_max
@@ -751,19 +994,18 @@ class DiceSpawner(Node):
             self.params.yaw = yaw_rand
             self.params.face_up = face_rand
             self.get_logger().info(
-                "Random pose spawning enabled (w.r.t base_link). "
+                f"Random pose spawning enabled (w.r.t '{self.params.base_link}'). "
                 f"Generated: x={x_spawn:.4f}, y={y_spawn:.4f}, yaw={yaw_rand:.4f}, face={face_rand}"
             )
         else:
             x_spawn = pos_param[0]
             y_spawn = pos_param[1]
             if not (x_min <= x_spawn <= x_max) or not (y_min <= y_spawn <= y_max):
-                error_msg = (
-                    f"Specified position [{x_spawn:.4f}, {y_spawn:.4f}] is outside the bounds: "
-                    f"x=[{x_min}, {x_max}], y=[{y_min}, {y_max}] (w.r.t base_link)"
+                warn_msg = (
+                    f"Specified position [{x_spawn:.4f}, {y_spawn:.4f}] is outside cell bounds: "
+                    f"x=[{x_min}, {x_max}], y=[{y_min}, {y_max}] (w.r.t '{self.params.base_link}'). Using specified position."
                 )
-                self.get_logger().error(error_msg)
-                raise SystemExit(error_msg)
+                self.get_logger().warning(warn_msg)
 
         clearance = (
             0.0005  # 0.5 mm padding to prevent false collision reports with the table surface
@@ -774,25 +1016,25 @@ class DiceSpawner(Node):
             warn_msg = (
                 f"Input Z coordinate {input_z:.4f} is below the target Z {target_z:.4f} "
                 f"(surface_height {surface_height:.4f} + dice_size/2 {self.dice_size/2.0:.4f}) "
-                "w.r.t base_link. Adjusting Z coordinate to place bottom of dice on surface."
+                f"w.r.t '{self.params.base_link}'. Adjusting Z coordinate to place bottom of dice on surface."
             )
             self.get_logger().warning(warn_msg)
             z_spawn = target_z
         else:
             z_spawn = input_z
 
-        # 2. Transform the position from base_link to self.world
+        # 2. Transform the position from the base_link param frame to self.world
         start_time = time.time()
         transform = None
         while transform is None:
             try:
                 transform = self.tf_buffer.lookup_transform(
-                    self.world, "base_link", rclpy.time.Time()
+                    self.world, self.params.base_link, rclpy.time.Time()
                 )
             except Exception as e:
                 if time.time() - start_time > 5.0:
                     self.get_logger().error(
-                        f"Timeout waiting for transform from base_link to {self.world}: {e}"
+                        f"Timeout waiting for transform from {self.params.base_link} to {self.world}: {e}"
                     )
                     raise SystemExit("Transform lookup failed")
                 # Spin internal node/executor to allow TF updates to process
@@ -813,7 +1055,7 @@ class DiceSpawner(Node):
             f"x={self.position.x:.4f}, y={self.position.y:.4f}, z={self.position.z:.4f}"
         )
 
-        # Transform the surface height from base_link to self.world
+        # Transform the surface height from the base_link param frame to self.world
         surface_pt_base = [0.0, 0.0, surface_height]
         rotated_surface = self.rotate_vector(surface_pt_base, [qx, qy, qz, qw])
         self.surface_height_world = rotated_surface[2] + tz
@@ -828,13 +1070,12 @@ class DiceSpawner(Node):
         if face is None or not (1 <= int(face) <= 6):
             face = random.randint(1, 6)
         self.face = int(face)
-        q_face = self.get_orientation_for_face(self.face)
 
         yaw = float(getattr(self.params, "yaw", 0.0))
         q_yaw = quaternion_from_euler(0.0, 0.0, yaw)
-
-        q_base = quaternion_multiply(q_yaw, q_face)
-        q_world = quaternion_multiply([qx, qy, qz, qw], q_base)
+        q_base = quaternion_multiply([qx, qy, qz, qw], q_yaw)
+        q_mesh = self.get_orientation_for_face(self.face)
+        q_world = quaternion_multiply(q_base, q_mesh)
 
         self.orientation_q = [
             float(q_world[0]),
@@ -842,17 +1083,14 @@ class DiceSpawner(Node):
             float(q_world[2]),
             float(q_world[3]),
         ]
+        self.update_face_transforms()
 
-        best_face = None
-        best_dot = -1.0
+    def update_face_transforms(self):
+        self.face_transforms = {}
         for face_id, normal in self.face_normals.items():
-            rotated_normal = self.rotate_vector(normal, self.orientation_q)
-            dot = rotated_normal[2]
-            if dot > best_dot:
-                best_dot = dot
-                best_face = face_id
-        if best_face is not None:
-            self.face = best_face
+            local_offset = (self.dice_size / 2.0) * normal
+            q_face_rel = self.get_quaternion_from_normal(normal)
+            self.face_transforms[face_id] = (local_offset, q_face_rel)
 
     def get_quaternion_from_normal(self, normal):
         z_axis = np.array([0, 0, 1])
@@ -989,7 +1227,7 @@ class DiceSpawner(Node):
                     current_pose.orientation.w = q_new[3]
                     parent_frame = self.world
                 except Exception as e:
-                    self.get_logger().error(f"Failed to lookup transform in gravity timer: {e}")
+                    self.get_logger().warning(f"Failed to lookup transform in gravity timer ({e}), retrying next cycle...", throttle_duration_sec=2.0)
                     return
 
             aligned_pose, max_d = self.get_aligned_pose(current_pose)

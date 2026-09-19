@@ -7,9 +7,7 @@ import time
 from geometry_msgs.msg import Pose, Quaternion
 from tf2_ros import Buffer, TransformListener
 from moveit_msgs.msg import PlanningScene, CollisionObject
-from moveit_msgs.srv import GetPlanningScene, ApplyPlanningScene
-from easy_motion_msgs.srv import DiceIdentification
-from std_msgs.msg import ColorRGBA
+from drims_homework_interfaces.srv import DieIdentification
 from moveit_msgs.msg import ObjectColor
 
 
@@ -237,12 +235,12 @@ class RealignmentIntegrationTester(Node):
 
         # 6. Call the /dice_identification service to trigger the spawning of dice_tf (Z-up)
         self.get_logger().info("Calling /dice_identification service...")
-        identify_client = self.create_client(DiceIdentification, "/dice_identification")
+        identify_client = self.create_client(DieIdentification, "/dice_identification")
         if not identify_client.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("FAIL: DiceIdentification service not available!")
+            self.get_logger().error("FAIL: DieIdentification service not available!")
             return False
 
-        req_ident = DiceIdentification.Request()
+        req_ident = DieIdentification.Request()
         future_ident = identify_client.call_async(req_ident)
         rclpy.spin_until_future_complete(self, future_ident, timeout_sec=5.0)
 

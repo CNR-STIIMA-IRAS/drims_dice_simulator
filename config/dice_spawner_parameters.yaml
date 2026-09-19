@@ -1,12 +1,15 @@
 dice_spawner_node:
   ros__parameters:
+    # Base link frame
+    base_link: "base_footprint"
+
     # Dice dimensions
-    dice_size: 0.03
+    dice_size: 0.04
     pips_distance: 0.26
     pip_diameter: 0.21
 
     # Playing board dimensions (w.r.t the base_link)
-    selected_cell: 4 # Select the cell to spawn the dice in (1, 2, 3, or 4)
+    selected_cell: 4 # Select the cell to spawn the dice in (1, 2, 3, 4, or 5: tiago cell)
     cell_1:
       x_min: -0.35
       x_max: 0.15
@@ -31,9 +34,19 @@ dice_spawner_node:
       y_min: 0.50
       y_max: 0.85
       surface_height: -0.02
+    # Cell 5: TIAGo cell
+    cell_5:
+      x_min: 0.45
+      x_max: 0.75
+      y_min: -0.10
+      y_max: 0.25
+      surface_height: 0.73
 
     # Dice spawn parameters
-    random_position: false
+    random_position: true
     position: [-0.1, 0.65, -0.04]  # w.r.t the base_link
     yaw: 0.5 #radians
     face_up: 3
+
+    # Die identification (DieIdentification3D service)
+    single_face_detection: true #false  # If true, only report the top face; front_face/front_face_pips are returned as unknown ("None"/0), simulating a detector that only captures the top face
